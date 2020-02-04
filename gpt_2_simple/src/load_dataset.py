@@ -7,7 +7,7 @@ import tqdm
 import csv
 
 
-def load_dataset(enc, path, combine):
+def load_dataset(enc, path, combine, part_of_talk):
     paths = []
     if os.path.isfile(path):
         # Simple file
@@ -22,6 +22,7 @@ def load_dataset(enc, path, combine):
         paths = glob.glob(path)
 
     token_chunks = []
+    max_len_chunks = []
     raw_text = ''
     for path in tqdm.tqdm(paths):
         if path.endswith('.npz'):
@@ -36,21 +37,32 @@ def load_dataset(enc, path, combine):
                 fp.readline()   # skip header
                 reader = csv.reader(fp)
                 for row in reader:
-                    raw_text += start_token + row[0] + end_token + "\n"
+                    raw_text = start_token + row[0] + end_token + "\n"
+                    if raw_text:
+                        tokens = np.stack(enc.encode(raw_text))
+                        if len(tokens) >= 128:
+                            if part_of_talk == 'start':
+                                token_chunks.extend(tokens[:128].tolist())
+                            elif part_of_talk == 'end':
+                                token_chunks.extend(tokens[-128:].tolist())
+                            else:
+                                max_len_chunks.append(tokens)
+                    if len(token_chunks) == 1024 and part_of_talk:
+                        max_len_chunks.append(np.array(token_chunks))
+                        token_chunks = []
         else:
             # Plain text
             with open(path, 'r', encoding='utf8', errors='ignore') as fp:
                 raw_text += fp.read()
             if len(raw_text) >= combine:
                 tokens = np.stack(enc.encode(raw_text))
-                token_chunks.append(tokens)
+                max_len_chunks.append(tokens)
                 raw_text = ''
             else:
                 raw_text += '<|endoftext|>'
-    if raw_text:
-        tokens = np.stack(enc.encode(raw_text))
-        token_chunks.append(tokens)
-    return token_chunks
+    # if raw_text:
+    #         token_chunks.append(tokens)
+    return max_len_chunks
 
 
 def binary_search(f, lo, hi):
@@ -79,7 +91,10 @@ class Sampler(object):
             self.boundaries.append(self.boundaries[-1] + chunks[i].shape[0])
 
     def sample(self, length):
-        assert length < self.total_size // len(
+        print(self.total_size)
+        print(length)
+        print(len(self.chunks))
+        assert length <= self.total_size // len(
             self.chunks
         ), "Dataset files are too small to sample {} tokens at a time".format(
             length)
@@ -87,6 +102,7 @@ class Sampler(object):
             index = random.randint(0, self.total_size - length - 1)
             i = binary_search(lambda j: self.boundaries[j] > index, 0,
                               len(self.boundaries) - 1) - 1
-            if self.boundaries[i + 1] > index + length:
+            if self.boundaries[i + 1] >= index + length:
                 within_chunk = index - self.boundaries[i]
                 return self.chunks[i][within_chunk:within_chunk + length]
+
