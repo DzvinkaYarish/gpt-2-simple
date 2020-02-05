@@ -37,7 +37,7 @@ def load_dataset(enc, path, combine, part_of_talk):
                 fp.readline()   # skip header
                 reader = csv.reader(fp)
                 for row in reader:
-                    raw_text = start_token + row[0] + end_token + "\n"
+                    raw_text = start_token + ','.join(row) + end_token + "\n"
                     if raw_text:
                         tokens = np.stack(enc.encode(raw_text))
                         if len(tokens) >= 128:
